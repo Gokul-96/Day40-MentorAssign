@@ -1,198 +1,151 @@
-//Modules and middleware
-require('dotenv').config();
-const mongoose = require('mongoose');
 const express = require('express');
-const { request } = require('http');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const { MONGO_URI } = require('./config/dbconfig');
+
+
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-//atlas url
-const url = process.env.ATLAS_URL;
+//  Connect to MongoDB
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}).then(() => {
+  console.log('Connected to MongoDB');
+}).catch((err) => {
+  console.error('Error connecting to MongoDB:', err.message);
+});
 
-//mongodb connect
-mongoose.connect(url)
-    .then(() => {
-        console.log("connected to atlas mongodb");
-    })
-    .catch(err => {
-        console.error(err);
-    })
+//  Create Mentor and Student models
 
-//define mentor schema
+// mentor model
 const mentorSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true
-    }
+  name: String,
+  email: String,
+  id: String,
+  
 });
-
-//define student schema
-const studentSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true,
-    },
-    currentMentor: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Mentor"
-    },
-    previousMentor: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Mentor"
-    }]
-});
-
-
-//Create a mentor model
 const Mentor = mongoose.model('Mentor', mentorSchema);
 
-//Create a student model
+//student model
+const studentSchema = new mongoose.Schema({
+  name: String,
+  email: String,
+  id: String,
+  batch: String,
+  mentor: { type: mongoose.Schema.Types.ObjectId, ref: 'Mentor', default: null },
+});
 const Student = mongoose.model('Student', studentSchema);
 
-//Get mentor and student details
-app.get('/',(req,res)=>{
-    Mentor.find({},{})
-     .then(mentor=>{
-         Student.find({},{})
-            .then(student=>{
-                res.status(200).json({"Mentor":mentor,"Student":student})
-                console.log(mentor, student)
-          })
-     })
-})
+// API to create mentors and students
 
+//API for mentors
 
-//Create a mentor
-app.post('/mentor', (request, response) => {
-
-    const { name } = request.body
-    const mentor = new Mentor({ name });
+app.post('/mentors', (req, res) => {
+    const mentorData = req.body;
+    const mentor = new Mentor(mentorData);
+  
     mentor.save()
-        .then(mentor => {
-            if (mentor) {
-                response.status(201).json({ message: `Mentor ${name}  created successfully` });
-            }
-        })
-        .catch(err => {
-            response.status(404).json({ err: "Failed to create mentor", "Json-request must include": '{"name":"mentor-name"}' })
-        })
+      .then((savedMentor) => {
+        res.status(201).json(savedMentor);
+      })
+      .catch((err) => {
+        res.status(500).json({ error: 'Unable to create mentor.' });
+      });
+  });
 
-})
 
-//Create a student
-app.post('/student', (request, response) => {
 
-    const { name } = request.body;
-    const student = new Student({ name });
-    student.save()
-        .then(student => {
-            if (student) {
-                response.status(201).json({ message: `Student ${name}  created successfully` });
-            }
-        })
-        .catch(err => {
-            response.status(404).json({ err: "Failed to create student", "Json-request must include": '{"name":"student-name"}' });
-        })
-})
-
-//Assign student to mentor
-app.post('/assign/:mentorId/:studentId', (request, response) => {
-
-    const { mentorId, studentId } = request.params;
-    Student.findById(studentId)
-        .then(student => {
-            if (!student.currentMentor) {
-                return Mentor.findById(mentorId)
-                    .then(mentor => {
-                        if (mentor) {
-                            return Student.findByIdAndUpdate(studentId, { currentMentor: mentorId });
-                        }
-                    })
-            } else {
-                response.status(404).json({ Message: "Already, Student assigned to mentor" });
-            }
-        })
-        .then(Updatedstudent => {
-            if (Updatedstudent) {
-                response.status(201).json({ Message: "Student assigned to mentor successfully" });
-            }
-
-        })
-        .catch(err => {
-            response.status(404).json({ Error: "Failed to assign student to mentor- Please check given mentorId and studentId " });
-        })
+app.post('/students', (req, res) => {
+  const studentData = req.body;
+  Student.create(studentData)
+    .then((student) => {
+      res.status(201).json(student);
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Unable to create student.' });
+    });
 });
 
-//Reassign student to mentor
-app.post('/reassign/:mentorId/:studentId', (request, response) => {
+//  API to assign a student to a mentor
+app.post('/students/:studentId/assign-mentor/:mentorId', (req, res) => {
+  const { studentId, mentorId } = req.params;
 
-    const { mentorId, studentId } = request.params;
-    Mentor.findById(mentorId)
-        .then(mentor => {
-            if (mentor) {
-                return Student.findById(studentId)
-                    .then(student => {
-                        if (student.currentMentor) {
-                            if (!student.previousMentor.includes(student.currentMentor)) {
-                                let previousmentor = [...student.previousMentor, student.currentMentor];
-                                return Student.findByIdAndUpdate(studentId, { currentMentor: mentorId, previousMentor: previousmentor });
-                            } else {
-                                return Student.findByIdAndUpdate(studentId, { currentMentor: mentorId });
-                            }
-                        }
-                    })
-            } else {
-                response.status(404).json({ Message: "Mentor not found" })
-            }
-        })
-        .then(updatedstudent => {
-            if (updatedstudent) {
-                response.status(201).json({ Message: "Mentor reassigned to student successfully" });
-            } else {
-                response.status(404).json({ Message: "Student not found " });
-            }
-        })
-        .catch(err => {
-            response.status(404).json({ Message: "Failed to assign student" });
-        });
+  Mentor.findById(mentorId)
+    .then((mentor) => {
+      if (!mentor) {
+        throw new Error('Mentor not found.');
+      }
+      return Student.findByIdAndUpdate(
+        studentId,
+        { mentor: mentorId },
+        
+        { new: true }
+      );
+    })
+    .then((student) => {
+      res.status(200).json(student);
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Unable to assign mentor.' });
+    });
+    
 });
 
-//Get all students for a particular mentor
-app.get('/mentor/:mentorId', (request, response) => {
+// Step 5: Write an API to assign or change a mentor for a particular student
+app.post('/students/:studentId/change-mentor/:mentorId', (req, res) => {
+  const { studentId, mentorId } = req.params;
 
-    const { mentorId } = request.params;
-    Student.find({ currentMentor: mentorId })
-        .populate('currentMentor')
-        .then(student => {
-            response.status(200).json(student);
-        })
-        .catch(err => {
-            response.status(404).json({ err: "Failed to get students" });
-        })
-})
-
-//Get the previously assigned mentor for a particular student
-app.get('/student/:studentId', (request, response) => {
-
-    const { studentId } = request.params;
-    Student.findById(studentId)
-        .populate('previousMentor')
-        .then((student) => {
-            if (!student) {
-                return response.status(404).json({ error: 'Student not found' });
-            } else {
-                response.json(student.previousMentor);
-            }
-        })
-        .catch((err) => {
-            response.status(404).json({ err: 'Failed to get student-mentor' });
-        });
+  Mentor.findById(mentorId)
+    .then((mentor) => {
+      if (!mentor) {
+        throw new Error('Mentor not found.');
+      }
+      return Student.findByIdAndUpdate(
+        studentId,
+        { mentor: mentorId },
+        { new: true }
+      );
+    })
+    .then((student) => {
+      res.status(200).json(student);
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Unable to assign/change mentor.' });
+    });
 });
 
+// Step 6: Write an API to show all students for a particular mentor
+app.get('/mentors/:mentorId/students', (req, res) => {
+  const { mentorId } = req.params;
 
+  Student.find({ mentor: mentorId })
+    .then((students) => {
+      res.status(200).json(students);
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Unable to fetch students.' });
+    });
+});
 
-const PORT = 3001;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Step 7: Write an API to show the previously assigned mentor for a particular student
+app.get('/students/:studentId/previous-mentor', (req, res) => {
+  const { studentId } = req.params;
 
-})
+  Student.findById(studentId)
+    .populate('mentor')
+    .exec()
+    .then((student) => {
+      const previousMentor = student.mentor || {};
+      res.status(200).json(previousMentor);
+    })
+    .catch((err) => {
+      res.status(500).json({ error: 'Unable to fetch previous mentor.' });
+    });
+});
+
+// Start the server
+app.listen(3000, () => {
+  console.log('Server is running on port 3000');
+});

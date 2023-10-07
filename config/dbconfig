@@ -1,0 +1,5 @@
+const mongodb = require('mongodb');
+
+const MONGO_URI = 'mongodb+srv://gokulakrishnanm96:xS7BNTqDXwsbFlb4@cluster0.nggzffn.mongodb.net/?retryWrites=true&w=majority';
+
+module.exports = { mongodb, MONGO_URI };
